@@ -175,7 +175,14 @@
         const sendBtn = document.getElementById('send-btn');
         const modelSelect = document.getElementById('model-select');
 
-        // Fitur: Tekan Enter untuk kirim, Shift+Enter untuk baris baru
+        // Simpan riwayat agar pertanyaan lanjutan tetap memiliki konteks.
+        const riwayatChat = [
+            {
+                role: 'system',
+                content: 'Kamu adalah asisten AI yang membantu, jelas, ramah, dan menjawab dalam bahasa yang digunakan pengguna. Pahami konteks percakapan sebelumnya.'
+            }
+        ];
+
         userInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -185,40 +192,55 @@
 
         async function kirimPesan() {
             const pesan = userInput.value.trim();
-            if (!pesan) return;
+            if (!pesan || sendBtn.disabled) return;
 
-            // 1. Tampilkan pesan user di layar
             tambahPesan(pesan, 'user');
             userInput.value = '';
-            
-            // 2. Nonaktifkan tombol & input sementara
             sendBtn.disabled = true;
             userInput.disabled = true;
 
-            // 3. Tampilkan indikator loading
             const loadingId = tambahPesan('Sedang berpikir', 'ai loading-dots');
+            riwayatChat.push({ role: 'user', content: pesan });
 
             try {
-                const modelTerpilih = modelSelect.value;
-                
-                // 4. Panggil API Puter.js
-                const response = await puter.ai.chat(pesan, { 
-                    model: modelTerpilih 
+                // Batasi riwayat agar percakapan panjang tidak terus membesar.
+                const pesanUntukAI = [
+                    riwayatChat[0],
+                    ...riwayatChat.slice(-20)
+                ];
+
+                const response = await puter.ai.chat(pesanUntukAI, {
+                    model: modelSelect.value,
+                    normalize: true
                 });
 
-                // 5. Hapus loading dan tampilkan jawaban
-                hapusPesan(loadingId);
-                
-                // Mengecek struktur response dari Puter.js
-                const jawabanAI = response.message ? response.message.content : response;
-                tambahPesan(jawabanAI, 'ai');
+                const isi = response?.message?.content ?? response?.content ?? response;
+                let jawabanAI = '';
 
-            } catch (error) {
-                console.error(error);
+                if (typeof isi === 'string') {
+                    jawabanAI = isi.trim();
+                } else if (Array.isArray(isi)) {
+                    jawabanAI = isi
+                        .filter(item => item && (item.type === 'text' || typeof item.text === 'string'))
+                        .map(item => item.text || '')
+                        .join('\n')
+                        .trim();
+                }
+
+                if (!jawabanAI) {
+                    throw new Error('AI tidak mengirimkan jawaban teks. Coba kirim pertanyaan lagi.');
+                }
+
                 hapusPesan(loadingId);
-                tambahPesan("Gagal mengambil jawaban. Pastikan koneksi internet lancar atau coba lagi nanti.", 'ai error');
+                tambahPesan(jawabanAI, 'ai');
+                riwayatChat.push({ role: 'assistant', content: jawabanAI });
+            } catch (error) {
+                console.error('Kesalahan chat:', error);
+                hapusPesan(loadingId);
+                riwayatChat.pop();
+                const detail = error?.message || 'Terjadi kesalahan yang tidak diketahui.';
+                tambahPesan('Maaf, jawaban gagal dimuat. ' + detail + ' Periksa koneksi internet lalu coba lagi.', 'ai error');
             } finally {
-                // 6. Kembalikan fungsi tombol & input
                 sendBtn.disabled = false;
                 userInput.disabled = false;
                 userInput.focus();
@@ -227,15 +249,12 @@
 
         function tambahPesan(teks, tipe) {
             const div = document.createElement('div');
-            div.className = `message ${tipe}`;
+            div.className = 'message ' + tipe;
             div.textContent = teks;
-            
-            // Buat ID unik untuk pesan (untuk loading)
-            const id = 'msg-' + Date.now() + Math.random().toString(36).substr(2, 9);
+            const id = 'msg-' + Date.now() + Math.random().toString(36).slice(2, 11);
             div.id = id;
-            
             chatContainer.appendChild(div);
-            chatContainer.scrollTop = chatContainer.scrollHeight; // Auto scroll ke bawah
+            chatContainer.scrollTop = chatContainer.scrollHeight;
             return id;
         }
 
